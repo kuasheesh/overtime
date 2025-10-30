@@ -1,31 +1,71 @@
-// A simple function to load and parse CSV data
-async function loadCSV(url) {
-    // Note: We use the fetch API to get the CSV file
-    const response = await fetch(url);
-    const text = await response.text();
+// ====================================================================
+// Configuration: REPLACE THESE WITH YOUR ACTUAL GOOGLE SHEET IDs!
+// ====================================================================
+const SPREADSHEET_ID = 'YOUR_SPREADSHEET_ID_HERE'; // e.g., '1ABc2dEFghIJKlmnopQrsTUVwXyZ0123456789'
+const GID = 'YOUR_GID_HERE';                      // e.g., '0' for the first sheet, or '123456789'
 
-    // Papa Parse is excellent for handling CSV data
-    return Papa.parse(text, {
-        header: true, // Treat the first row as column headers
-        skipEmptyLines: true
-    });
+// The URL for the Google Visualization API Query endpoint
+const DATA_SOURCE_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
+
+// ====================================================================
+// Function to fetch and parse the Google Sheet JSON
+// ====================================================================
+async function fetchAndParseData() {
+    try {
+        const response = await fetch(DATA_SOURCE_URL);
+        const text = await response.text();
+        
+        // The Google Visualization API returns a JSON response wrapped in a function call.
+        // We need to strip this wrapper to get the clean JSON object.
+        const jsonText = text.substring(47).slice(0, -2);
+        const dataObject = JSON.parse(jsonText);
+        
+        const rows = dataObject.table.rows;
+        const columns = dataObject.table.cols;
+        const headers = columns.map(col => col.label).filter(label => label); // Get non-empty headers
+
+        let parsedData = [];
+
+        // Loop through the data rows
+        for (const row of rows) {
+            let record = {};
+            // Loop through the cells in the row and map them to their header name
+            for (let i = 0; i < headers.length; i++) {
+                const header = headers[i];
+                // The c property holds the cell data; v is the value. Handle potential null cells.
+                const cellValue = row.c[i] ? row.c[i].v : '';
+                record[header] = cellValue;
+            }
+            parsedData.push(record);
+        }
+
+        return parsedData;
+
+    } catch (error) {
+        console.error("Error fetching or parsing Google Sheets data:", error);
+        document.getElementById('data-table-container').innerHTML = 
+            '<p style="color: red;">Error loading live data. Please check the Spreadsheet ID, GID, and ensure the sheet is published to the web.</p>';
+        return [];
+    }
 }
 
-// Function to filter the data based on search term
+// ====================================================================
+// Filtering and Rendering Functions (mostly unchanged)
+// ====================================================================
+
 function filterData(data, searchTerm) {
-    const term = searchTerm.toLowerCase().trim();
+    const term = String(searchTerm).toLowerCase().trim();
     if (!term) return [];
 
     return data.filter(row => {
-        // Check both 'Employee Code' and 'Employee Name'
-        const code = String(row['Employee Code']).toLowerCase();
-        const name = String(row['Employee Name']).toLowerCase();
+        // Ensure values are treated as strings for robust searching
+        const code = String(row['Employee Code'] || '').toLowerCase();
+        const name = String(row['Employee Name'] || '').toLowerCase();
 
         return code.includes(term) || name.includes(term);
     });
 }
 
-// Function to render the results table and total hours
 function renderResults(filteredData) {
     const tableContainer = document.getElementById('data-table-container');
     const totalHoursContainer = document.getElementById('total-hours-container');
@@ -41,7 +81,8 @@ function renderResults(filteredData) {
 
     // --- 1. Create the Table ---
     const table = document.createElement('table');
-    const headers = Object.keys(filteredData[0]); // Get headers from the first row
+    // We assume the first row of filtered data has the column headers defined
+    const headers = Object.keys(filteredData[0]); 
 
     // Create Table Header
     let thead = '<thead><tr>';
@@ -57,13 +98,15 @@ function renderResults(filteredData) {
     filteredData.forEach(row => {
         tbody += '<tr>';
         headers.forEach(header => {
-            const value = row[header] || ''; // Use empty string for missing data
+            const value = row[header] || '';
             tbody += `<td>${value}</td>`;
         });
         tbody += '</tr>';
 
         // Sum the 'Hours' column
-        const hours = parseFloat(row['Hours']);
+        // The value is already a number from the Google Sheet response, 
+        // but we use parseFloat to be safe.
+        const hours = parseFloat(row['Hours']); 
         if (!isNaN(hours)) {
             totalHours += hours;
         }
@@ -80,26 +123,15 @@ function renderResults(filteredData) {
 
 // --- Main Execution Block ---
 document.addEventListener('DOMContentLoaded', async () => {
-    // Inject the Papa Parse library dynamically
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js';
-    document.head.appendChild(script);
-
-    // Wait for Papa Parse to load
-    await new Promise(resolve => script.onload = resolve);
+    // Show a loading message while we fetch the live data
+    document.getElementById('data-table-container').innerHTML = '<p>Loading data from Google Sheet...</p>';
     
-    let allEmployeeData = [];
+    let allEmployeeData = await fetchAndParseData();
     
-    try {
-        const result = await loadCSV('employee_data.csv'); // Load the CSV file
-        allEmployeeData = result.data;
+    // Clear the loading message only if data was loaded (parsedData is not empty)
+    if (allEmployeeData.length > 0) {
+        document.getElementById('data-table-container').innerHTML = '<p class="placeholder">Search to see your data.</p>';
         console.log("Data loaded successfully:", allEmployeeData.length, "rows.");
-
-    } catch (error) {
-        console.error("Error loading CSV file:", error);
-        document.getElementById('data-table-container').innerHTML = 
-            '<p style="color: red;">Error loading data. Make sure `employee_data.csv` is in the correct location.</p>';
-        return; // Stop if data cannot be loaded
     }
 
     const searchButton = document.getElementById('searchButton');
